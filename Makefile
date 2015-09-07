@@ -12,7 +12,7 @@ PYTHON = python
 
 IMPLS = awk bash c clojure coffee cpp crystal cs erlang es6 factor forth fsharp go groovy \
 	haskell java julia js lua make mal ocaml matlab miniMAL nim \
-	perl php ps python r racket rpython ruby rust scala swift vb guile
+	perl php ps python r racket rpython ruby rust scala swift vb guile clisp
 
 step0 = step0_repl
 step1 = step1_read_print
@@ -58,6 +58,7 @@ STEP_TEST_FILES = $(strip $(wildcard $(1)/tests/$($(2)).mal) $(wildcard tests/$(
 awk_STEP_TO_PROG =     awk/$($(1)).awk
 bash_STEP_TO_PROG =    bash/$($(1)).sh
 c_STEP_TO_PROG =       c/$($(1))
+clisp_STEP_TO_PROG   = clisp/$($(1)).cl
 clojure_STEP_TO_PROG = clojure/src/$($(1)).clj
 coffee_STEP_TO_PROG =  coffee/$($(1)).coffee
 cpp_STEP_TO_PROG =     cpp/$($(1))
@@ -104,6 +105,7 @@ export FACTOR_ROOTS := src
 awk_RUNSTEP =     awk -O -f ../$(2) $(3)
 bash_RUNSTEP =    bash ../$(2) $(3)
 c_RUNSTEP =       ../$(2) $(3)
+clisp_RUNSTEP =   sbcl --script "../$(2)" $(3)
 clojure_RUNSTEP = lein with-profile +$(1) trampoline run $(3)
 coffee_RUNSTEP =  coffee ../$(2) $(3)
 cpp_RUNSTEP =     ../$(2) $(3)
