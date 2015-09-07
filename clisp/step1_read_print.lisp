@@ -10,11 +10,17 @@
 (defun is-whitespaces (s)
   (is-whitespace (char s 0)))
 
+(defvar *parens*
+  '("(" ")"))
+
+(defvar *quotes*
+  '("'" "`" "~" "~@"))
+
 (defvar *tokens*
-  '("(" ")" "'"))
+  (append *parens* *quotes*))
 
 (defun is-paren (str)
-  (member str '("(" ")") :test #'equal))
+  (member str *parens* :test #'equal))
 
 (defun lisp-format (tokens)
   (if (listp tokens)
@@ -65,6 +71,11 @@
 	     (if (not (equal "" input))
 		 (let ((f (scar input))
 		       (rest (subseq input 1)))
+		   (if (equal f "~")
+		       (if (and rest (equal (subseq rest 0 1) "@"))
+			   (block nil
+			     (setq f "~@")
+			     (setq rest (subseq rest 1)))))
 		   (cond
 		     ((member f *tokens* :test #'equal)
 		      (append (list acc f) (inner rest nil)))
@@ -102,18 +113,33 @@
       (first tokens)))
 	  
 
+(defun quotep (quote)
+  (member quote *quotes* :test #'equal))
+
+(defun quote-label (quote)
+  (cond ((equal quote "'")
+	 "quote")
+	((equal quote "`")
+	 "quasiquote")
+	((equal quote "~")
+	 "unquote")
+	((equal quote "~@")
+	 "splice-unquote")
+	(t (error "wtf"))))
+
 (defun quotify (tokens)
   (if tokens
     (let ((h (first tokens))
 	  (tail (rest tokens)))
-      (if (equal "'" h)
-	  (let ((quoted (next-stmt tail)))
+      (if (quotep h)
+	  (let ((quoted (next-stmt tail))
+		(q-label (quote-label h)))
 	    (if (listp quoted)
-		(append (list "(" "quote")
+		(append (list "(" q-label)
 			quoted
 			'(")")
 			(quotify (subseq tokens (+ 1 (length quoted)))))
-		(append (list "(" "quote" quoted ")")
+		(append (list "("  q-label quoted ")")
 			(quotify (if tail
 				     (rest tail)
 				     nil)))))
