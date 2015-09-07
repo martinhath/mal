@@ -1,8 +1,13 @@
+
 (defun -read ()
   (let ((input (read-line *standard-input* nil nil)))
-    (string-trim '(#\Space #\Tab) input)))
+    (typify
+     (lispify ;; list of string to lisp structure
+      (quotify ;; handle quotes etc.
+       (tokenize ;; lexing
+	(string-trim '(#\Space #\Tab) input)))))))
 
-(defun scar (s) (string (char s 0)))
+(defun scar (s) (subseq s 0 1))
 
 (defun is-whitespace (c)
   (member c (coerce '(#\space #\tab #\,) 'list)))
@@ -10,14 +15,9 @@
 (defun is-whitespaces (s)
   (is-whitespace (char s 0)))
 
-(defvar *parens*
-  '("(" ")"))
-
-(defvar *quotes*
-  '("'" "`" "~" "~@"))
-
-(defvar *tokens*
-  (append *parens* *quotes*))
+(defvar *parens* '("(" ")"))
+(defvar *quotes* '("'" "`" "~" "~@"))
+(defvar *tokens* (append *parens* *quotes*))
 
 (defun is-paren (str)
   (member str *parens* :test #'equal))
@@ -49,22 +49,12 @@
       "" 
       (subseq str n)))
 
-(defun read-car-to (input &optional escape)
-  "Returns the string beginning with (car input), and ending
-   in (car input). If escape, \\(car input) should not match.
-   (read-car-to \"abd 123\\agakek 12 5112 aa a\" t) -> \"abd 123\\aga\""
-  (let ((chr (scar input))
-	(rest (subseq input 1)))
-    (labels ((inner (input)
-	       (unless (equal "" input)
-		(let ((h (scar input))
-		      (rest (subseq input 1)))
-		    (cond ((and (equal h "\"") escape)
-			    (concatenate 'string (string-take input 2) (inner (string-drop input 2))))
-			((equal h chr)
-			    h)
-			(t (concatenate 'string h (inner rest))))))))
-     (concatenate 'string chr (inner rest)))))
+(defun read-inner-string (input)
+  (let ((head (char input 0)))
+    (if (eq head #\")
+	(let ((pos (position #\" (subseq input 1))))
+	  (subseq input 1 (+ 1 pos)))
+	(princ "read-inner-string was passed something weird."))))
 
 (defun tokenize (input)
   (labels ((inner (input acc)
@@ -80,8 +70,8 @@
 		     ((member f *tokens* :test #'equal)
 		      (append (list acc f) (inner rest nil)))
 		     ((equal f "\"")
-		      (let* ((str (read-car-to input t))
-			     (rst (subseq input (length str))))
+		      (let* ((str (read-inner-string input))
+			     (rst (subseq input (+ 2 (length str)))))
 			(cons str (inner rst nil))))
 		     ((is-whitespaces f)
 		      (if acc 
@@ -146,29 +136,80 @@
 	  (block nil
 	      (cons h (quotify tail)))))))
 
+(defun cutoff (l)
+  (butlast (cdr l)))
+
+(defun lispify (tokens)
+  (if tokens
+      (if (listp tokens)
+	  (let ((head (first tokens))
+		(tail (rest tokens)))
+	    (if (equal "(" head)
+	   	(let* ((inside (cutoff (next-stmt tokens)))
+	   	       (in-len (length inside)))
+	   	  (cons (lispify inside)
+			(lispify (subseq tail (1+ in-len)))))
+	   	(cons head (lispify tail))))
+	  tokens)))
+
+(defun typify (input)
+  (labels ((is-number (n)
+	     (parse-integer n :junk-allowed t))
+	   (is-string (s)
+	     (and (> (length s) 2)
+		  (equal "\"" (subseq s 2))
+		  (cutoff (cutoff s))))
+	   )
+    (if (listp input)
+	(mapcar #'typify input)
+	(cond ((is-number input)
+	       (is-number input))
+	      ((is-string input)
+	       (is-string input))
+	      (t input)))))
+
 
 (defun -eval (input)
-  (let ((tokens (tokenize input)))
-    (quotify tokens)))
+  (if (listp input)
+      (mapcar #'-eval input)
+      input))
 
 (defun newline () (format t "~%"))
 
+
+(defun show (elem)
+  (cond ((listp elem)
+	 (mapcar #'show elem))
+	((numberp elem)
+	 (write-to-string elem))
+	((stringp elem)
+	 (concatenate 'string "\"" elem "\""))
+	(t
+	 elem)))
+      
+
 (defun -print (input &optional nl)
-  (princ (lisp-format input))
+  (princ (cond ((listp input)
+		(mapcar #'show input))
+	       (t
+		(show input))))
   (when nl
     (newline))
   (force-output))
 
 (defun rep ()
   (let ((prompt "user> ")
-	(str ""))
+	(in 1))
     (do ()
-	((null str))
-      (-print prompt)
-      (setq str (-read))
-      (if (not str)
+	((null in))
+      (princ prompt)
+      (force-output)
+      (setq in (-read))
+      (unless in
 	  (return))
-      (-print (-eval str) t))))
+      (mapcar #'(lambda (e)
+		  (-print (-eval e) t)) in))))
+
 
 (declaim (optimize (debug 3)))
 (rep)
