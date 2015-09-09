@@ -21,12 +21,37 @@
 
 (defparameter *env* (make-hash-table :test #'equal))
 
+	      
+(defun group-n (list n)
+  (if list
+      (if (> n (length list))
+	   `(,list)
+	   (cons (subseq list 0 n) (group-n (subseq list n) n)))))
 
-;; FUNCTIONS
-(setf (gethash "+" *env*) #'(lambda (a b) (+ a b)))
-(setf (gethash "-" *env*) #'(lambda (a b) (- a b)))
-(setf (gethash "*" *env*) #'(lambda (a b) (* a b)))
-(setf (gethash "/" *env*) #'(lambda (a b) (/ a b)))
+(defun make-dotted (lst)
+  (mapcar
+   #'(lambda (e) `(,(first e) . ,(second e)))
+   lst))
+
+(defun copy-env (env)
+  (let ((new-env (make-hash-table
+		  :test (hash-table-test env)
+		  :size (hash-table-size env))))
+    (maphash #'(lambda (key value)
+		 (setf (gethash key new-env) value))
+	     env)
+    new-env))
+
+(defun -let* (vals body)
+  (let ((args (make-dotted (group-n vals 2)))
+	(func (gethash "def!" *env*))
+	(env (copy-env *env*)))
+    (mapcar #'(lambda (kv)
+		(let ((k (car kv))
+		      (v (cdr kv)))
+		  (funcall func k (-eval v env) env)))
+	    args)
+    (-eval body env)))
 
 (defun is-paren (str)
   (member str *parens* :test #'equal))
@@ -178,18 +203,21 @@
 	      (t input)))))
 
 
-(defun -eval (input)
-  (if (listp input)
-      (let* ((head (-eval (first input))))
-	(cond ((functionp head)
-	       (apply head (mapcar #'-eval (rest input))))
-	      (t
+(defun -eval (input &optional (env *env*))
+  (cond ((listp input)
+	 (let* ((head (-eval (first input))))
+	   (if (functionp head)
+	       (apply head
+		      (if (special-p (first input))
+			  (rest input)
+			  (mapcar #'(lambda (e) (-eval e env)) (rest input))))
 	       input)))
-	       
-      (let ((e (gethash input *env*)))
-	(if e
-	    e
-	    input))))
+	((stringp input)
+	 (let ((lookup (gethash input env)))
+	   (if lookup
+	       lookup
+	       input)))
+	(t input)))
 
 (defun newline () (format t "~%"))
 
@@ -227,6 +255,23 @@
       (mapcar #'(lambda (e)
 		  (-print (-eval e) t)) in))))
 
+
+(defun special-p (name)
+  (member name
+	  '("def!" "let*")
+	  :test #'equal))
+
+;; FUNCTIONS
+(setf (gethash "+" *env*) #'(lambda (a b) (+ a b)))
+(setf (gethash "-" *env*) #'(lambda (a b) (- a b)))
+(setf (gethash "*" *env*) #'(lambda (a b) (* a b)))
+(setf (gethash "/" *env*) #'(lambda (a b) (/ a b)))
+(setf (gethash "def!" *env*)
+      #'(lambda (a b &optional (env *env*))
+	  (let ((e (-eval b)))
+	    (setf (gethash a env) e)
+	    e)))
+(setf (gethash "let*" *env*) #'-let*)
 
 (declaim (optimize (debug 3)))
 (rep)
