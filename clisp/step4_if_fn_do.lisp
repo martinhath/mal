@@ -1,3 +1,16 @@
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (asdf:load-system :cl-ppcre))
+
+;; Notes on the data:
+;; The Mal expression
+;;    (+ 1 2)
+;; is, under the hood
+;;    (('function '+) ('number 1) ('number 2))
+;; where the (a, b) tuples are `(make-mal :type a :value b)`
+;; The expresion
+;;    (+ (* 2 3) 4)
+;; is
+;;    (('function '+) ('list (('function '*) ('number 2) ('number 3))) ('number 2)) 
 
 (defun -read ()
   (let ((input (read-line *standard-input* nil nil)))
@@ -22,6 +35,20 @@
 
 (defparameter *env* (make-hash-table :test #'equal))
 
+;; Mal type structure, with misc functions
+(defstruct mal type value)
+(defun malp (e) (eq (type-of e) 'mal))
+
+
+(defvar scanner
+  (cl-ppcre:create-scanner
+   "[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\.|[^\\\"])*\"|;.*|[^\\s\\[\\]{}('\"`,;)]*)"))
+
+(defun tokenize (str)
+  (let ((tokens (cl-ppcre:all-matches-as-strings scanner str)))
+    (remove-if #'(lambda (s) (equal "" s))
+	       (mapcar #'(lambda (s) (string-trim " " s)) tokens))))
+      
 	      
 (defun group-n (list n)
   (if list
@@ -91,6 +118,7 @@
 	  (subseq input 1 (+ 1 pos)))
 	(princ "read-inner-string was passed something weird."))))
 
+;; TODO: REMOVE
 (defun tokenize (input)
   (labels ((inner (input acc)
 	     (if (not (equal "" input))
@@ -142,14 +170,10 @@
   (member quote *quotes* :test #'equal))
 
 (defun quote-label (quote)
-  (cond ((equal quote "'")
-	 "quote")
-	((equal quote "`")
-	 "quasiquote")
-	((equal quote "~")
-	 "unquote")
-	((equal quote "~@")
-	 "splice-unquote")
+  (cond ((equal quote "'") "quote")
+	((equal quote "`") "quasiquote")
+	((equal quote "~") "unquote")
+	((equal quote "~@") "splice-unquote")
 	(t (error "wtf"))))
 
 (defun quotify (tokens)
@@ -227,21 +251,23 @@
 
 
 (defun show (elem)
-  (cond ((listp elem)
-	 (mapcar #'show elem))
-	((numberp elem)
-	 (write-to-string elem))
-	((stringp elem)
-	 (concatenate 'string "\"" elem "\""))
-	(t
-	 elem)))
-      
+  "Take a mal value type, and return its string representation.
+   Contrary to 'lisp style' printing, this does not need to 
+   be reversable read into the same representation"
+  (let ((type (mal-type elem))
+	(val (mal-value elem)))
+    (case type
+	(('list)   (mapcar #'show val))
+	(('number) (write-to-string val))
+	(('string) val)
+	(('symbol) (symbol-name val))
+	(otherwise elem))))
+	
 
 (defun -print (input &optional nl)
-  (princ (cond ((listp input)
-		(mapcar #'show input))
-	       (t
-		(show input))))
+  (princ (cond ((malp input)  (show input))
+	       ((listp input) (mapcar #'show input))
+	       (t (format t "~S ~S~%" 'ERR (type-of input)))))
   (when nl
     (newline))
   (force-output))
@@ -254,7 +280,7 @@
       (princ prompt)
       (force-output)
       (setq in (-read))
-      (unless in
+      (if (or (not in) (equal (car in) "quit"))
 	  (return))
       (mapcar #'(lambda (e)
 		  (-print (-eval e) t)) in))))
@@ -269,8 +295,8 @@
 ;; FUNCTIONS
 
 ;; TODO:
-(defun function-call (name &rest rest)
-  )
+ function-call (name &rest rest)
+;  )
 ;; Math functions
 (setf (gethash "+" *env*) #'(lambda (a b) (+ a b)))
 (setf (gethash "-" *env*) #'(lambda (a b) (- a b)))
@@ -279,6 +305,7 @@
 ;; List functions
 (setf (gethash "list" *env*)
       #'(lambda (&rest rest)
+	  ;;(if 
 	  (list rest)))
 
 ;; Special form functions
