@@ -45,6 +45,8 @@
    "[\\s,]*(~@|[\\[\\]{}()'`~^@]|\"(?:\\.|[^\\\"])*\"|;.*|[^\\s\\[\\]{}('\"`,;)]*)"))
 
 (defun tokenize (str)
+  "Take a mal expression as a string, and return a list of 
+   mal tokens"
   (let ((tokens (cl-ppcre:all-matches-as-strings scanner str)))
     (remove-if #'(lambda (s) (equal "" s))
 	       (mapcar #'(lambda (s) (string-trim " " s)) tokens))))
@@ -118,33 +120,6 @@
 	  (subseq input 1 (+ 1 pos)))
 	(princ "read-inner-string was passed something weird."))))
 
-;; TODO: REMOVE
-(defun tokenize (input)
-  (labels ((inner (input acc)
-	     (if (not (equal "" input))
-		 (let ((f (scar input))
-		       (rest (subseq input 1)))
-		   (if (equal f "~")
-		       (if (and rest (equal (subseq rest 0 1) "@"))
-			   (block nil
-			     (setq f "~@")
-			     (setq rest (subseq rest 1)))))
-		   (cond
-		     ((member f *tokens* :test #'equal)
-		      (append (list acc f) (inner rest nil)))
-		     ((equal f "\"")
-		      (let* ((str (read-inner-string input))
-			     (rst (subseq input (+ 2 (length str)))))
-			(cons str (inner rst nil))))
-		     ((is-whitespaces f)
-		      (if acc 
-			  (cons acc (inner rest nil))
-			  (inner rest nil)))
-		     (t
-		      (inner rest (concatenate 'string acc f)))))
-		 (list acc))))
-    (remove-if #'null (inner input nil))))
-
 (defun next-stmt (tokens)
   (if (is-paren (first tokens))
       (let ((level 1)
@@ -197,6 +172,69 @@
 
 (defun cutoff (l)
   (butlast (cdr l)))
+
+
+(defun malify (tokens)
+  "Transforms a list of tokens into the fomat specified
+   above."
+  (labels ((split-string (toks acc &optional (paren-level 0))
+	     "Split a list of tokens, and return the first
+              list as first element, and the rest of the tokens
+              as the second element"
+	     (if toks
+		 (let ((head (first toks))
+		       (tail (rest toks)))
+		   (cond ((equal head "(")
+			  (setq paren-level (1+ paren-level)))
+			 ((equal head ")")
+			  (setq paren-level (1- paren-level))))
+		   (if (= 0 paren-level)
+		       (values (cons head acc) tail)
+		       (split-string tail (cons head acc) paren-level)))))
+	   (is-string (tok)
+	     (let ((a (subseq tok 0 1))
+		   (z (subseq (reverse tok) 0 1)))
+	       (and (equal a #\")
+		    (equal z #\"))))
+	   (is-number (tok) ;; TODO: add support for double/floats
+	     (parse-integer tok :junk-allowed t))
+	   (do-inner (elems func)
+	     (print elems)
+	     (labels ((inner (es f)
+		      	(if (null (cdr es))
+			    es
+			    (cons (funcall f (first es))
+				  (inner (rest es) f)))))
+	       (cons (first elems) (inner (rest elems) func))))
+	   )
+    (if tokens
+	(if (listp tokens)
+	    (let ((head (first tokens))
+		  (tail (rest tokens)))
+	      (cond ((equal head "(")
+		     (multiple-value-bind (lst rst) (split-string tokens nil)
+		       (let ((req (malify (rest (butlast (reverse lst))))))
+			 (setq head (make-mal
+				     :type 'list
+				     :value req)))
+		       (setq tail rst)))
+		    ((is-string head)
+		     (setq head (make-mal
+				 :type 'string
+				 :value head)))
+		    ((is-number head)
+		     (setq head (make-mal
+				 :type 'number
+				 :value (is-number head))))
+		    (t
+		     (setq head (make-mal
+				 :type 'symbol
+				 :value (intern head))))
+		    )
+	      (cons head (malify tail)))
+	    ;; somewhat hacky ?
+	    (first (malify (list tokens)))))))
+
 
 (defun lispify (tokens)
   (if tokens
@@ -294,9 +332,6 @@
 
 ;; FUNCTIONS
 
-;; TODO:
- function-call (name &rest rest)
-;  )
 ;; Math functions
 (setf (gethash "+" *env*) #'(lambda (a b) (+ a b)))
 (setf (gethash "-" *env*) #'(lambda (a b) (- a b)))
