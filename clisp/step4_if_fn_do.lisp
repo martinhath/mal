@@ -14,11 +14,10 @@
 
 (defun -read ()
   (let ((input (read-line *standard-input* nil nil)))
-    (typify
-     (lispify ;; list of string to lisp structure
+     (malify ;; list of string to lisp structure
       (quotify ;; handle quotes etc.
        (tokenize ;; lexing
-	(string-trim '(#\Space #\Tab) input)))))))
+	(string-trim '(#\Space #\Tab) input))))))
 
 (defun scar (s) (subseq s 0 1))
 
@@ -72,53 +71,19 @@
 	     env)
     new-env))
 
-(defun -let* (vals body)
-  (let ((args (make-dotted (group-n vals 2)))
-	(func (gethash "def!" *env*))
-	(env (copy-env *env*)))
-    (mapcar #'(lambda (kv)
-		(let ((k (car kv))
-		      (v (cdr kv)))
-		  (funcall func k (-eval v env) env)))
-	    args)
-    (-eval body env)))
+; (defun -let* (vals body)
+;   (let ((args (make-dotted (group-n vals 2)))
+; 	(func (gethash "def!" *env*))
+; 	(env (copy-env *env*)))
+;     (mapcar #'(lambda (kv)
+; 		(let ((k (car kv))
+; 		      (v (cdr kv)))
+; 		  (apply func k (-eval v env) env)))
+; 	    args)
+;     (-eval body env)))
 
 (defun is-paren (str)
   (member str *parens* :test #'equal))
-
-(defun lisp-format (tokens)
-  (if (listp tokens)
-    (let ((head (car tokens))
-	  (rest (cdr tokens))
-	  (peek (cadr tokens)))
-	(if rest
-	    ;; Check if we should _skip_ printing space
-	    (if (or (equal "(" head)
-		    (and (equal ")" head)
-			 (equal ")" peek))
-		    (equal ")" peek)
-		    (equal "'" head))
-		(concatenate 'string head (lisp-format rest))
-		(concatenate 'string head " " (lisp-format rest)))
-	    head))
-    tokens))
-
-(defun string-take (str n)
-  (if (>= n (length str))
-      str
-      (subseq str 0 n)))
-
-(defun string-drop (str n)
-  (if (>= n (length str))
-      "" 
-      (subseq str n)))
-
-(defun read-inner-string (input)
-  (let ((head (char input 0)))
-    (if (eq head #\")
-	(let ((pos (position #\" (subseq input 1))))
-	  (subseq input 1 (+ 1 pos)))
-	(princ "read-inner-string was passed something weird."))))
 
 (defun next-stmt (tokens)
   (if (is-paren (first tokens))
@@ -194,19 +159,10 @@
 	   (is-string (tok)
 	     (let ((a (subseq tok 0 1))
 		   (z (subseq (reverse tok) 0 1)))
-	       (and (equal a #\")
-		    (equal z #\"))))
+	       (and (equal a "\"")
+		    (equal z "\""))))
 	   (is-number (tok) ;; TODO: add support for double/floats
-	     (parse-integer tok :junk-allowed t))
-	   (do-inner (elems func)
-	     (print elems)
-	     (labels ((inner (es f)
-		      	(if (null (cdr es))
-			    es
-			    (cons (funcall f (first es))
-				  (inner (rest es) f)))))
-	       (cons (first elems) (inner (rest elems) func))))
-	   )
+	     (parse-integer tok :junk-allowed t)))
     (if tokens
 	(if (listp tokens)
 	    (let ((head (first tokens))
@@ -235,55 +191,26 @@
 	    ;; somewhat hacky ?
 	    (first (malify (list tokens)))))))
 
-
-(defun lispify (tokens)
-  (if tokens
-      (if (listp tokens)
-	  (let ((head (first tokens))
-		(tail (rest tokens)))
-	    (if (equal "(" head)
-	   	(let* ((inside (cutoff (next-stmt tokens)))
-	   	       (in-len (length inside)))
-	   	  (cons (lispify inside)
-			(lispify (subseq tail (1+ in-len)))))
-	   	(cons head (lispify tail))))
-	  tokens)))
-
-(defun typify (input)
-  (labels ((is-number (n)
-	     (parse-integer n :junk-allowed t))
-	   (is-string (s)
-	     (and (> (length s) 2)
-		  (equal "\"" (subseq s 2))
-		  (cutoff (cutoff s))))
-	   )
-    (if (listp input)
-	(mapcar #'typify input)
-	(cond ((is-number input)
-	       (is-number input))
-	      ((is-string input)
-	       (let ((str (is-string input)))
-		 (if (member str *keywords* :test #'equal)
-		     (intern str)
-		     str)))
-	      (t input)))))
-
+(defun mal-eval-list (input env)
+  (let* ((mal-func (first input))
+	 (func (mal-value mal-func))
+	 (args (mapcar #'-eval (rest input)))
+	 (f (gethash func env)))
+    (if f
+	;; ignore special forms for now
+	(apply f env args)
+	(format t "ERR: Symbol ~S is not a function.~%" func))))
 
 (defun -eval (input &optional (env *env*))
-  (cond ((listp input)
-	 (let* ((head (-eval (first input))))
-	   (if (functionp head)
-	       (apply head
-		      (if (special-p (first input))
-			  (rest input)
-			  (mapcar #'(lambda (e) (-eval e env)) (rest input))))
-	       input)))
-	((stringp input)
-	 (let ((lookup (gethash input env)))
-	   (if lookup
-	       lookup
-	       input)))
-	(t input)))
+  (if (listp input)
+      (mapcar #'(lambda (e) (-eval e env)) input)
+      (let ((type (mal-type input))
+	    (val (mal-value input)))
+	(case type
+	  (list (mal-eval-list val env))
+	  (number val)
+	  (string val)
+	  (symbol (gethash val env))))))
 
 (defun newline () (format t "~%"))
 
@@ -295,17 +222,19 @@
   (let ((type (mal-type elem))
 	(val (mal-value elem)))
     (case type
-	(('list)   (mapcar #'show val))
-	(('number) (write-to-string val))
-	(('string) val)
-	(('symbol) (symbol-name val))
-	(otherwise elem))))
+      (('list)   (if val
+		     (mapcar #'show val)
+		     "()"))
+      (('number) (write-to-string val))
+      (('string) val)
+      (('symbol) (symbol-name val))
+      (otherwise elem))))
 	
 
 (defun -print (input &optional nl)
   (princ (cond ((malp input)  (show input))
 	       ((listp input) (mapcar #'show input))
-	       (t (format t "~S ~S~%" 'ERR (type-of input)))))
+	       (t input)))
   (when nl
     (newline))
   (force-output))
@@ -318,38 +247,14 @@
       (princ prompt)
       (force-output)
       (setq in (-read))
-      (if (or (not in) (equal (car in) "quit"))
+      (if (eq (mal-value (car in)) '|quit|)
 	  (return))
       (mapcar #'(lambda (e)
 		  (-print (-eval e) t)) in))))
 
-
-(defun special-p (name)
-  "List over special forms."
-  (member name
-	  '("def!" "let*" "if" "fn*" "do")
-	  :test #'equal))
-
-;; FUNCTIONS
-
-;; Math functions
-(setf (gethash "+" *env*) #'(lambda (a b) (+ a b)))
-(setf (gethash "-" *env*) #'(lambda (a b) (- a b)))
-(setf (gethash "*" *env*) #'(lambda (a b) (* a b)))
-(setf (gethash "/" *env*) #'(lambda (a b) (/ a b)))
-;; List functions
-(setf (gethash "list" *env*)
-      #'(lambda (&rest rest)
-	  ;;(if 
-	  (list rest)))
-
-;; Special form functions
-(setf (gethash "def!" *env*)
-      #'(lambda (a b &optional (env *env*))
-	  (let ((e (-eval b)))
-	    (setf (gethash a env) e)
-	    e)))
-(setf (gethash "let*" *env*) #'-let*)
+;;(load (merge-pathnames "functions.lisp" (car (directory "clisp"))))
+;;(load "../clisp/functions.lisp")
+(load "clisp/functions.lisp")
 
 (declaim (optimize (debug 3)))
 (rep)
