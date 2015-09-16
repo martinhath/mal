@@ -12,6 +12,9 @@
 ;; is
 ;;    (('function '+) ('list (('function '*) ('number 2) ('number 3))) ('number 2)) 
 
+
+
+
 (defun -read ()
   (let ((input (read-line *standard-input* nil nil)))
      (malify ;; list of string to lisp structure
@@ -32,12 +35,31 @@
 (defvar *tokens* (append *parens* *quotes*))
 (defvar *keywords* '("nil" "true" "false"))
 
+;; TODO: move this
+(defun specialp (name)
+  "List over special forms."
+  (member name '(|def!| |let*| |if| |fn*| |do|)))
+
+
 (defparameter *env* (make-hash-table :test #'equal))
 
 ;; Mal type structure, with misc functions
 (defstruct mal type value)
 (defun malp (e) (eq (type-of e) 'mal))
 
+(defun to-mal (val)
+  "Take a value, and fix the correct type."
+  (if (malp val)
+      val
+      (make-mal :type (cond ((stringp val) 'string)
+			    ((numberp val) 'number)
+			    ((and (listp val)
+				  (not (null val))) 'list)
+			    ((or (eq 't val) (eq nil val)) 'boolean)
+			    ((symbolp val) 'symbol)
+			    ((functionp val) 'function)
+			    (t (format t "`to-mal` was given ~S~%" val)))
+		:value val)))
 
 (defvar scanner
   (cl-ppcre:create-scanner
@@ -70,17 +92,6 @@
 		 (setf (gethash key new-env) value))
 	     env)
     new-env))
-
-; (defun -let* (vals body)
-;   (let ((args (make-dotted (group-n vals 2)))
-; 	(func (gethash "def!" *env*))
-; 	(env (copy-env *env*)))
-;     (mapcar #'(lambda (kv)
-; 		(let ((k (car kv))
-; 		      (v (cdr kv)))
-; 		  (apply func k (-eval v env) env)))
-; 	    args)
-;     (-eval body env)))
 
 (defun is-paren (str)
   (member str *parens* :test #'equal))
@@ -135,10 +146,6 @@
 	  (block nil
 	      (cons h (quotify tail)))))))
 
-(defun cutoff (l)
-  (butlast (cdr l)))
-
-
 (defun malify (tokens)
   "Transforms a list of tokens into the fomat specified
    above."
@@ -162,7 +169,10 @@
 	       (and (equal a "\"")
 		    (equal z "\""))))
 	   (is-number (tok) ;; TODO: add support for double/floats
-	     (parse-integer tok :junk-allowed t)))
+	     (parse-integer tok :junk-allowed t))
+	   (is-boolean (tok)
+	     (or (equal tok "false")
+		 (equal tok "true"))))
     (if tokens
 	(if (listp tokens)
 	    (let ((head (first tokens))
@@ -182,23 +192,37 @@
 		     (setq head (make-mal
 				 :type 'number
 				 :value (is-number head))))
+		    ((is-boolean head)
+		     (setq head (make-mal
+				 :type 'boolean
+				 :value (equal head "true"))))
 		    (t
 		     (setq head (make-mal
 				 :type 'symbol
-				 :value (intern head))))
-		    )
+				 :value (intern head)))))
 	      (cons head (malify tail)))
 	    ;; somewhat hacky ?
 	    (first (malify (list tokens)))))))
 
+
+(defun mal-funcall (env f args)
+  "Evaluate all arguments, then call the functions with 
+   the evaluated args."
+  (labels ((fix-mal (e)
+	     (if (malp e)
+		 e
+		 (to-mal e))))
+    (let ((eval-args (mapcar #'(lambda (a) (-eval (fix-mal a) env)) args)))
+      (to-mal (apply f eval-args)))))
+
 (defun mal-eval-list (input env)
   (let* ((mal-func (first input))
 	 (func (mal-value mal-func))
-	 (args (mapcar #'-eval (rest input)))
 	 (f (gethash func env)))
     (if f
-	;; ignore special forms for now
-	(apply f env args)
+	(if (specialp func)
+	    (apply f env (rest input))
+	    (mal-funcall env f (rest input)))
 	(format t "ERR: Symbol ~S is not a function.~%" func))))
 
 (defun -eval (input &optional (env *env*))
@@ -208,9 +232,22 @@
 	    (val (mal-value input)))
 	(case type
 	  (list (mal-eval-list val env))
-	  (number val)
-	  (string val)
-	  (symbol (gethash val env))))))
+	  (symbol (to-mal (gethash val env)))
+	  (otherwise input)))))
+
+(defun -eval-inner (input &optional (env *env*))
+  (let ((type (mal-type input))
+	(val (mal-value input)))
+    (if (eq type 'list)
+	(let* ((new-val (mal-eval-list val env))
+	       (type (cond ((numberp new-val) 'number)
+			   ((stringp new-val) 'string)
+			   ((listp new-val) 'list)
+			   (t 'symbol))))
+	  
+	  (make-mal :type type
+		    :value new-val))
+	input)))
 
 (defun newline () (format t "~%"))
 
@@ -219,22 +256,29 @@
   "Take a mal value type, and return its string representation.
    Contrary to 'lisp style' printing, this does not need to 
    be reversable read into the same representation"
-  (let ((type (mal-type elem))
-	(val (mal-value elem)))
-    (case type
-      (('list)   (if val
-		     (mapcar #'show val)
-		     "()"))
-      (('number) (write-to-string val))
-      (('string) val)
-      (('symbol) (symbol-name val))
-      (otherwise elem))))
+  (if (malp elem)
+      (let ((type (mal-type elem))
+     	    (val (mal-value elem)))
+	(case type
+     	  (list   (if val
+		      (mapcar #'show val)
+		      "()"))
+	  (number (write-to-string val))
+	  (string val)
+	  (symbol (symbol-name val))
+	  (boolean (if val "true" "false"))
+	  (otherwise val)))
+      ;; in case we're passing LISP data, show as is.
+      (if (not elem)
+	  "nil"
+	  elem)))
+  
 	
 
 (defun -print (input &optional nl)
-  (princ (cond ((malp input)  (show input))
-	       ((listp input) (mapcar #'show input))
-	       (t input)))
+  (princ (if (and input (listp input))
+	     (mapcar #'show input)
+	     (show input)))
   (when nl
     (newline))
   (force-output))
@@ -252,9 +296,8 @@
       (mapcar #'(lambda (e)
 		  (-print (-eval e) t)) in))))
 
-;;(load (merge-pathnames "functions.lisp" (car (directory "clisp"))))
-;;(load "../clisp/functions.lisp")
-(load "clisp/functions.lisp")
+(load "../clisp/functions.lisp")
+;;(load "clisp/functions.lisp")
 
 (declaim (optimize (debug 3)))
 (rep)
